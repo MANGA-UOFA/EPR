@@ -1,1 +1,1 @@
-Path for alignemnt files
+Path for SNLI alignemnt files

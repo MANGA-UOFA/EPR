@@ -1,1 +1,1 @@
-Path for saved model
+Path for saved SNLI model

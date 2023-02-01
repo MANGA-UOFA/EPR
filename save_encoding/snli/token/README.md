@@ -1,1 +1,1 @@
-Path for tokenized files
+Path for SNLI tokenized files

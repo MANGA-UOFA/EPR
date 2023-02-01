@@ -12,6 +12,8 @@ def get_args():
     parser.add_argument("--do_train", action="store_true")
     parser.add_argument("--do_dev", action="store_true")
     parser.add_argument("--do_test", action="store_true")
+    parser.add_argument("--is_finetune", action="store_false")
+    parser.add_argument('--_lambda', type=float, default=0.6)
     parser.add_argument("--encoding_cache_path", type=str, default='./save_encoding/snli/token/')
     parser.add_argument("--save_encoding_path", type=str, default='./save_encoding/snli/alignment/')
     args = parser.parse_args()
@@ -66,12 +68,15 @@ class SBert(nn.Module):
 
     def forward(self, ids, attention_mask):
         model_output = self.model(ids, attention_mask)
-        return self.mean_pooling(model_output, attention_mask)
+        sentence_embeddings = self.mean_pooling(model_output, attention_mask)
+        # return nn.functional.normalize(sentence_embeddings, p=2, dim=-1)
+        return sentence_embeddings
 
 class Aligner():
-    def __init__(self, model_str, device):
+    def __init__(self, model_str, lamda, device):
         self.device = device
         self.model = SBert(model_str).to(self.device)
+        self.lamda = lamda
 
         # freeze bert model
         for param in self.model.parameters():
@@ -84,11 +89,12 @@ class Aligner():
 
         return cos_sim(model_output1, model_output2), model_output1, model_output2
     
-    def process(self, c1, c2, c1_token, c2_token):
+    def process(self, c1, c2, c1_token, c2_token, matrix_context, is_finetune):
         indice_c1 = np.arange(0, len(c1)).tolist()
         indice_c2 = np.arange(0, len(c2)).tolist()
         
         matrix, em1, em2 = self.compute(c1_token, c2_token)
+        matrix = (1-self.lamda) * matrix + self.lamda * matrix_context
         pos = obtain(matrix)
 
         for item in pos:
@@ -101,8 +107,10 @@ class Aligner():
         result['p_not_aligned'] = indice_c1
         result['h_not_aligned'] = indice_c2
         result['p_h_aligned'] = pos
-        result['cem1'] = em1.detach().cpu().numpy()
-        result['cem2'] = em2.detach().cpu().numpy()
+
+        if not is_finetune:
+            result['cem1'] = em1.detach().cpu().numpy()
+            result['cem2'] = em2.detach().cpu().numpy()
 
         return result
 
@@ -128,8 +136,9 @@ class ContextualSBert(nn.Module):
 
     def forward(self, ids, attention_mask, c_mask):
         model_output = self.model(ids, attention_mask)
-        return self.mean_pooling_c(model_output, attention_mask, c_mask) 
-            # , self.mean_pooling_s(model_output, attention_mask)
+        sentence_embeddings = self.mean_pooling_c(model_output, attention_mask, c_mask)
+        return sentence_embeddings
+        # return nn.functional.normalize(sentence_embeddings, p=2, dim=-1)
 
 class ContextualEcocder():
     def __init__(self, model_str, device):
@@ -150,21 +159,23 @@ class ContextualEcocder():
     def compute_dual(self, s1_token, c1_mask, s2_token, c2_mask):
         emc1 = self.compute(s1_token, c1_mask)
         emc2 = self.compute(s2_token, c2_mask)
-        return emc1, emc2
+        return cos_sim(emc1, emc2), emc1, emc2
 
-def convert2data_format(aligner, context_encoder, data_loader):
+def convert2data_format(aligner, context_encoder, data_loader, is_finetune):
     results = []
     pbar = tqdm(data_loader)
     for d in pbar:
         i, label = d['id'], d['label']
         c1, c2, c1_mask, c2_mask, c1_token, c2_token =  d['c1'], d['c2'], d['c1_mask'], d['c2_mask'], d['c1_token'], d['c2_token']
         s1, s2, s1_token, s2_token = d['s1'], d['s2'], d['s1_token'], d['s2_token']
-
-        emc1, emc2 = context_encoder.compute_dual(s1_token, c1_mask, s2_token, c2_mask)
-        result = aligner.process(c1, c2, c1_token, c2_token)
         
-        result['ccem1'] = emc1.detach().cpu().numpy()
-        result['ccem2'] = emc2.detach().cpu().numpy()
+        matrix_context, emc1, emc2 = context_encoder.compute_dual(s1_token, c1_mask, s2_token, c2_mask)
+        result = aligner.process(c1, c2, c1_token, c2_token, matrix_context, is_finetune)
+        
+        if not is_finetune:
+            result['ccem1'] = emc1.detach().cpu().numpy()
+            result['ccem2'] = emc2.detach().cpu().numpy()
+
         result['id'] = i
         result['label'] = label
         results.append(result)
@@ -177,17 +188,25 @@ if __name__ == '__main__':
 
     encoding_cache_path = args.encoding_cache_path
     save_encoding_path = args.save_encoding_path
+    _lambda = args._lambda
+    is_finetune = args.is_finetune
+
+    import os
+    if not os.path.exists(save_encoding_path):
+        os.makedirs(save_encoding_path)
     
-    model_str = 'sentence-transformers/paraphrase-mpnet-base-v2'
+    model_str = './backbone'
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    aligner = Aligner(model_str, device)
+    print("on device", device)
+    
+    aligner = Aligner(model_str, _lambda, device)
     context_encoder = ContextualEcocder(model_str, device)
 
     if args.do_train:
         print('Working on train set')
         with open(encoding_cache_path + 'train_tokens.pkl', 'rb') as f:
             train_data_loader = pickle.load(f)
-        train_results = convert2data_format(aligner, context_encoder, train_data_loader)
+        train_results = convert2data_format(aligner, context_encoder, train_data_loader, is_finetune)
         with open(save_encoding_path + 'train_alignment.pkl', 'wb') as f:
             print('saving {} train samples ... '.format(len(train_results)))
             pickle.dump(train_results, f)
@@ -196,7 +215,7 @@ if __name__ == '__main__':
         print('Working on dev set')
         with open(encoding_cache_path + 'dev_tokens.pkl', 'rb') as f:
             dev_data_loader = pickle.load(f) 
-        dev_results = convert2data_format(aligner, context_encoder, dev_data_loader)
+        dev_results = convert2data_format(aligner, context_encoder, dev_data_loader, is_finetune)
         with open(save_encoding_path + 'dev_alignment.pkl', 'wb') as f:
             print('saving {} dev samples ... '.format(len(dev_results)))
             pickle.dump(dev_results, f)
@@ -206,8 +225,17 @@ if __name__ == '__main__':
         with open(encoding_cache_path + 'test_tokens.pkl', 'rb') as f:
             test_data_loader = pickle.load(f)
         
-        np.random.shuffle(test_data_loader)
-        test_results = convert2data_format(aligner, context_encoder, test_data_loader)
+        # np.random.shuffle(test_data_loader)
+        test_results = convert2data_format(aligner, context_encoder, test_data_loader, is_finetune)
         with open(save_encoding_path + 'test_alignment.pkl', 'wb') as f:
             print('saving {} test samples ... '.format(len(test_results)))
             pickle.dump(test_results, f)
+
+        # print('Working on breaking set')
+        # with open(encoding_cache_path + 'breaking_tokens.pkl', 'rb') as f:
+        #     test_data_loader = pickle.load(f)
+        
+        # test_results = convert2data_format(aligner, context_encoder, test_data_loader, is_finetune)
+        # with open(save_encoding_path + 'breaking_alignment.pkl', 'wb') as f:
+        #     print('saving {} test samples ... '.format(len(test_results)))
+        #     pickle.dump(test_results, f)

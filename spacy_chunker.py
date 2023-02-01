@@ -150,6 +150,6 @@ class RandomChunker:
 
 if __name__ == '__main__':
     c = RandomChunker()
-    c1 = c.process('man, man')
+    c1 = c.process('There is no boy playing outdoors and there is no man smiling')
     # c1 = c.process('man, man')
     print(c1)

@@ -12,7 +12,7 @@ def get_args():
     parser.add_argument("--do_train", action="store_true")
     parser.add_argument("--do_dev", action="store_true")
     parser.add_argument("--do_test", action="store_true")
-    parser.add_argument("--data_path", type=str, default="./data/snli_1.0/")
+    parser.add_argument("--data_path", type=str, default="./snli_1.0/")
     parser.add_argument("--save_encoding_path", type=str, default="./save_encoding/snli/token/")
     args = parser.parse_args()
     return args
@@ -23,9 +23,9 @@ class Tokenizer():
 
     def tokenize(self, chunks, off_set_mapping=False):
         if off_set_mapping:
-            encoded_input = self.tokenizer(chunks, padding=True, truncation=True, max_length=128, return_offsets_mapping=True)
+            encoded_input = self.tokenizer(chunks, padding=True, truncation=True, max_length=256, return_offsets_mapping=True)
         else:
-            encoded_input = self.tokenizer(chunks, padding=True, truncation=True, max_length=128)
+            encoded_input = self.tokenizer(chunks, padding=True, truncation=True, max_length=256)
         return encoded_input
 
 def read_data(data_path):
@@ -43,11 +43,29 @@ def read_data(data_path):
             continue
         ids.append(i)
         examples.append((tmp['sentence1'], tmp['sentence2']))
-        examples_parse.append((tmp['sentence1_parse'], tmp['sentence2_parse']))
+        # examples_parse.append((tmp['sentence1_parse'], tmp['sentence2_parse']))
         labels.append(label2id[tmp['gold_label']])
         i += 1
 
     return ids, examples, labels, examples_parse
+
+# def read_data_sick(data_path, phase):
+#     label2id = {"ENTAILMENT":0, "CONTRADICTION":1, 'NEUTRAL':2}
+#     with open(data_path) as f:
+#         lines = f.readlines()
+#     ids = []
+#     examples = []
+#     labels = []
+#     for i, line in tqdm(enumerate(lines), desc="Reading SICK.txt"):
+#         if i == 0:
+#             continue
+#         line_info = line.strip().split('\t')
+#         if line_info[-1] == phase:
+#             ids.append(line_info[0])
+#             examples.append((line_info[1], line_info[2]))
+#             labels.append(label2id[line_info[3]])
+    
+#     return ids, examples, labels
 
 def offset_mapping2indice(c_offset, mapping):
     mask = []
@@ -85,7 +103,10 @@ def convert2tokens(ids, data, labels):
         s2_token = tokenizer.tokenize(ex[1], True)
         
         s1_mapping = s1_token['offset_mapping']
+        # print(s1_mapping, c1_offset)
         c1_mask = offset_mapping2indice(c1_offset, s1_mapping)
+        # print(ex[0], c1, c1_mask)
+        # exit()
         s2_mapping = s2_token['offset_mapping']
         c2_mask = offset_mapping2indice(c2_offset, s2_mapping)
 
@@ -103,8 +124,8 @@ def convert2tokens(ids, data, labels):
         this['s2'] = ex[1]
         this['s1_token'] = s1_token
         this['s2_token'] = s2_token
-        this['c1_mask'] = c1_mask
-        this['c2_mask'] = c2_mask
+        this['c1_mask'] = np.stack(c1_mask, axis=0)
+        this['c2_mask'] = np.stack(c2_mask, axis=0)
         this['label'] = label
         data_loader.append(this)
     
@@ -119,71 +140,35 @@ if __name__ == '__main__':
 
     chunker = Chunker('en_core_web_sm')
     # chunker = RandomChunker()
-    tokenizer = Tokenizer('sentence-transformers/paraphrase-mpnet-base-v2')
-    
+    tokenizer = Tokenizer('./backbone')
+
+    if data_path == './multinli_1.0/':
+        data_file = ["multinli_1.0_train.jsonl", "multinli_1.0_dev_mismatched.jsonl", "multinli_1.0_dev_matched.jsonl"] 
+    elif data_path == "./snli_1.0/":
+        data_file = ["snli_1.0_train.jsonl", "snli_1.0_dev.jsonl", "snli_1.0_test.jsonl"]
+
     if args.do_train:
-        ids, train_data, train_labels, _ = read_data(data_path + "snli_1.0_train.jsonl")
-        exit()
+        # ids, train_data, train_labels = read_data_sick(data_path + "SICK.txt", phase='TRAIN')
+        ids, train_data, train_labels, _ = read_data(data_path + data_file[0])
         train_examples = convert2tokens(ids, train_data, train_labels)
         with open(save_encoding_path + 'train_tokens.pkl', 'wb') as f:
             print('saving {} train samples ... '.format(len(train_examples)))
             pickle.dump(train_examples, f)
 
     if args.do_dev:
-        ids, dev_data, dev_labels, _ = read_data(data_path + "snli_1.0_dev.jsonl")
+        # ids, dev_data, dev_labels = read_data_sick(data_path + "SICK.txt", phase='TRIAL')
+        ids, dev_data, dev_labels, _ = read_data(data_path + data_file[1])
         dev_examples = convert2tokens(ids, dev_data, dev_labels)
         with open(save_encoding_path + 'dev_tokens.pkl', 'wb') as f:
             print('saving {} dev samples ... '.format(len(dev_examples)))
             pickle.dump(dev_examples, f)
 
     if args.do_test:
-        ids, test_data, test_labels, _ = read_data(data_path + "snli_1.0_test.jsonl")
+        # ids, test_data, test_labels = read_data_sick(data_path + "SICK.txt", phase='TEST')
+        ids, test_data, test_labels, _ = read_data(data_path + data_file[2])
+
+        # np.random.shuffle(test_data)
         test_examples = convert2tokens(ids, test_data, test_labels)
         with open(save_encoding_path + 'test_tokens.pkl', 'wb') as f:
             print('saving {} test samples ... '.format(len(test_examples)))
             pickle.dump(test_examples, f)
-    
-
-# def para_content(string):
-#     # print(string)
-#     stack = []
-#     for i, c in enumerate(string):
-#         if c == '(':
-#             stack.append(i)
-#         elif c == ')' and stack:
-#             start = stack.pop()
-#             element = string[start +1 : i]
-#             depth = len(stack)
-#             if depth == 0:
-#                 print(depth, element)
-
-# def generate_samples(generate_indice=False):
-#     if generate_indice:
-#         number_of_samples = 10
-#         import numpy as np
-#         indice = np.random.randint(low=0, high=10000, size=number_of_samples)
-#         with open('samples.txt', 'w') as f:
-#             for i in indice:
-#                 f.write(str(i)+'\n')
-
-#     examples, labels, _ = read_data("../data/snli_1.0/snli_1.0_test.jsonl")
-
-#     with open('samples.txt') as f:
-#         lines = f.readlines()
-#     indice = [int(x.strip()) for x in lines]
-
-#     sample_data = []
-#     sample_label = []
-#     for i in indice:
-#         sample_data.append(examples[i])
-#         sample_label.append(labels[i])
-
-#     label2id = {0: "entailment", 1: "contradiction", 2: 'neutral'}
-#     with open('SNLI_samples.txt', 'w') as f:
-#         for i in range(len(indice)):
-#             f.write(str(indice[i]) +'\n')
-#             f.write(sample_data[i][0] +'\n')
-#             f.write(sample_data[i][1] + '\n')
-#             f.write(label2id[sample_label[i]] +'\n')
-#             f.write('\n')
-
