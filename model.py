@@ -77,8 +77,6 @@ class InduceFunction():
         # c = 1 - self.geo_avg(1 - pred[:, 1], aligned_mask)
         # n = (1 - self.geo_avg(1 - pred[:, 2], total_mask)) * (1 - c)
 
-        # for breaking
-        # features = torch.stack([e, c+n, torch.tensor(0).type_as(e)], dim=-1)
         # for others
         features = torch.stack([e, c, n], dim=-1)
         normalized_features = nn.functional.normalize(features, p=1, dim=-1)

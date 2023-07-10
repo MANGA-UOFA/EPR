@@ -195,7 +195,7 @@ if __name__ == '__main__':
     if not os.path.exists(save_encoding_path):
         os.makedirs(save_encoding_path)
     
-    model_str = './backbone'
+    model_str = 'sentence-transformers/all-mpnet-base-v2'
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     print("on device", device)
     
@@ -230,12 +230,3 @@ if __name__ == '__main__':
         with open(save_encoding_path + 'test_alignment.pkl', 'wb') as f:
             print('saving {} test samples ... '.format(len(test_results)))
             pickle.dump(test_results, f)
-
-        # print('Working on breaking set')
-        # with open(encoding_cache_path + 'breaking_tokens.pkl', 'rb') as f:
-        #     test_data_loader = pickle.load(f)
-        
-        # test_results = convert2data_format(aligner, context_encoder, test_data_loader, is_finetune)
-        # with open(save_encoding_path + 'breaking_alignment.pkl', 'wb') as f:
-        #     print('saving {} test samples ... '.format(len(test_results)))
-        #     pickle.dump(test_results, f)

@@ -139,8 +139,7 @@ if __name__ == '__main__':
     save_encoding_path = args.save_encoding_path
 
     chunker = Chunker('en_core_web_sm')
-    # chunker = RandomChunker()
-    tokenizer = Tokenizer('./backbone')
+    tokenizer = Tokenizer('sentence-transformers/all-mpnet-base-v2')
 
     if data_path == './multinli_1.0/':
         data_file = ["multinli_1.0_train.jsonl", "multinli_1.0_dev_mismatched.jsonl", "multinli_1.0_dev_matched.jsonl"] 
